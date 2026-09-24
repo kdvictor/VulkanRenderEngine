@@ -36,6 +36,20 @@ This document provides:
 
 ---
 
+### 📕 [CPP_Migration.md](CPP_Migration.md)
+**C++ Vulkan API Migration Guide**
+
+This document covers:
+- Complete migration from C-style API to C++ vulkan.hpp
+- Before/after code comparisons
+- RAII and automatic resource management
+- Exception handling patterns
+- Benefits and best practices
+
+**Recommended for**: Understanding the modern C++ API and migration process.
+
+---
+
 ### 📙 [Vulkan编程指南.pdf](Vulkan编程指南.pdf)
 **Vulkan Programming Guide (Chinese)**
 

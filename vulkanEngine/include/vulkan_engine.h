@@ -1,8 +1,9 @@
 /**
  * @file vulkan_engine.h
- * @brief Vulkan rendering engine class declaration
+ * @brief Vulkan rendering engine class declaration (C++ API version)
  * @details This header defines the VulkanEngine class which encapsulates
  *          all Vulkan initialization, resource management, and rendering logic.
+ *          Uses modern C++ vulkan.hpp bindings with RAII and exception handling.
  */
 
 #ifndef VULKAN_ENGINE_H
@@ -14,12 +15,13 @@
 #include <windows.h>
 #endif
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
 #include <cstdint>
+#include <vector>
 
 /**
  * @class VulkanEngine
- * @brief Main Vulkan rendering engine class
+ * @brief Main Vulkan rendering engine class (C++ API)
  *
  * @details This class manages the entire Vulkan rendering pipeline including:
  *          - Instance and device creation
@@ -27,6 +29,11 @@
  *          - Render pass configuration
  *          - Command buffer management
  *          - Synchronization primitives
+ *
+ * Uses C++ vulkan.hpp bindings with:
+ *          - RAII (Unique handles) for automatic resource management
+ *          - Exception handling instead of manual error checking
+ *          - Modern C++ idioms
  */
 class VulkanEngine
 {
@@ -37,7 +44,7 @@ public:
     VulkanEngine();
 
     /**
-     * @brief Destructor - calls cleanup()
+     * @brief Destructor - automatically cleans up all resources via RAII
      */
     ~VulkanEngine();
 
@@ -46,13 +53,13 @@ public:
      * @param nativeWinHandle Native window handle (HWND on Windows)
      * @param width Initial window width in pixels
      * @param height Initial window height in pixels
-     * @return true if initialization succeeds, false otherwise
+     * @throws vk::SystemError if initialization fails
      *
      * @details This function performs complete Vulkan initialization including:
      *          instance creation, device selection, swapchain setup, and
      *          synchronization object creation.
      */
-    bool init(void* nativeWinHandle, uint32_t width, uint32_t height);
+    void init(void* nativeWinHandle, uint32_t width, uint32_t height);
 
     /**
      * @brief Execute one frame of the render loop
@@ -65,50 +72,50 @@ public:
     /**
      * @brief Clean up all Vulkan resources
      *
-     * @details Destroys all Vulkan objects in proper order and frees allocated memory.
+     * @details Waits for device to be idle. RAII handles automatically destroy
+     *          all resources in proper order.
      */
     void cleanup();
 
 private:
     // ============================================================================
-    // Vulkan Core Objects
+    // Vulkan Core Objects (RAII managed)
     // ============================================================================
 
-    VkInstance       m_instance = VK_NULL_HANDLE;              ///< Vulkan instance
-    VkPhysicalDevice m_physDev = VK_NULL_HANDLE;               ///< Physical device (GPU)
-    VkDevice         m_device = VK_NULL_HANDLE;                ///< Logical device
-    VkQueue          m_graphicsQueue = VK_NULL_HANDLE;         ///< Graphics queue
-    uint32_t         m_graphicsQueueFamilyIndex = 0;           ///< Graphics queue family index
+    vk::UniqueInstance       m_instance;                       ///< Vulkan instance
+    vk::PhysicalDevice       m_physDev;                        ///< Physical device (GPU)
+    vk::UniqueDevice         m_device;                         ///< Logical device
+    vk::Queue                m_graphicsQueue;                  ///< Graphics queue
+    uint32_t                 m_graphicsQueueFamilyIndex = 0;   ///< Graphics queue family index
 
     // ============================================================================
-    // Surface and Swapchain
+    // Surface and Swapchain (RAII managed)
     // ============================================================================
 
-    VkSurfaceKHR     m_surface = VK_NULL_HANDLE;               ///< Window surface
-    VkSwapchainKHR   m_swapchain = VK_NULL_HANDLE;             ///< Swapchain
-    VkFormat         m_swapchainImageFormat;                   ///< Swapchain image format
-    VkExtent2D       m_swapchainExtent;                        ///< Swapchain extent (width, height)
+    vk::UniqueSurfaceKHR     m_surface;                        ///< Window surface
+    vk::UniqueSwapchainKHR   m_swapchain;                      ///< Swapchain
+    vk::Format               m_swapchainImageFormat;           ///< Swapchain image format
+    vk::Extent2D             m_swapchainExtent;                ///< Swapchain extent (width, height)
 
     // ============================================================================
-    // Rendering Resources
+    // Rendering Resources (RAII managed)
     // ============================================================================
 
-    VkRenderPass     m_renderPass = VK_NULL_HANDLE;            ///< Render pass
-    VkCommandPool    m_cmdPool = VK_NULL_HANDLE;               ///< Command pool
-    VkCommandBuffer  m_cmdBuffer = VK_NULL_HANDLE;             ///< Command buffer
+    vk::UniqueRenderPass     m_renderPass;                     ///< Render pass
+    vk::UniqueCommandPool    m_cmdPool;                        ///< Command pool
+    vk::CommandBuffer        m_cmdBuffer;                      ///< Command buffer
 
-    VkImage*         m_swapchainImages = nullptr;              ///< Array of swapchain images
-    VkImageView*     m_swapchainImageViews = nullptr;          ///< Array of image views
-    VkFramebuffer*   m_framebuffers = nullptr;                 ///< Array of framebuffers
-    uint32_t         m_swapchainImageCount = 0;                ///< Number of swapchain images
+    std::vector<vk::Image>           m_swapchainImages;        ///< Array of swapchain images
+    std::vector<vk::UniqueImageView> m_swapchainImageViews;    ///< Array of image views (RAII)
+    std::vector<vk::UniqueFramebuffer> m_framebuffers;         ///< Array of framebuffers (RAII)
 
     // ============================================================================
-    // Synchronization Objects
+    // Synchronization Objects (RAII managed)
     // ============================================================================
 
-    VkSemaphore      m_imageAvailableSem = VK_NULL_HANDLE;     ///< Semaphore for image acquisition
-    VkSemaphore      m_renderFinishedSem = VK_NULL_HANDLE;     ///< Semaphore for render completion
-    VkFence          m_inFlightFence = VK_NULL_HANDLE;         ///< Fence for frame synchronization
+    vk::UniqueSemaphore      m_imageAvailableSem;              ///< Semaphore for image acquisition
+    vk::UniqueSemaphore      m_renderFinishedSem;              ///< Semaphore for render completion
+    vk::UniqueFence          m_inFlightFence;                  ///< Fence for frame synchronization
 
     // ============================================================================
     // Private Initialization Methods
@@ -116,73 +123,73 @@ private:
 
     /**
      * @brief Create Vulkan instance
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createInstance();
+    void createInstance();
 
     /**
      * @brief Select suitable physical device (GPU)
-     * @return true on success, false on failure
+     * @throws std::runtime_error if no suitable device found
      */
-    bool pickPhysicalDevice();
+    void pickPhysicalDevice();
 
     /**
      * @brief Create logical device and retrieve graphics queue
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createLogicalDevice();
+    void createLogicalDevice();
 
     /**
      * @brief Create window surface for rendering
      * @param nativeWinHandle Native window handle
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createSurface(void* nativeWinHandle);
+    void createSurface(void* nativeWinHandle);
 
     /**
      * @brief Create swapchain with specified dimensions
      * @param w Width in pixels
      * @param h Height in pixels
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createSwapchain(uint32_t w, uint32_t h);
+    void createSwapchain(uint32_t w, uint32_t h);
 
     /**
      * @brief Create render pass with basic color attachment
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createRenderPass();
+    void createRenderPass();
 
     /**
      * @brief Create framebuffers for all swapchain images
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createFramebuffers();
+    void createFramebuffers();
 
     /**
      * @brief Create command pool for allocating command buffers
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createCommandPool();
+    void createCommandPool();
 
     /**
      * @brief Allocate command buffer from command pool
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createCommandBuffer();
+    void createCommandBuffer();
 
     /**
      * @brief Create synchronization objects (semaphores and fences)
-     * @return true on success, false on failure
+     * @throws vk::SystemError on failure
      */
-    bool createSyncObjects();
+    void createSyncObjects();
 
     /**
      * @brief Record rendering commands into command buffer
      * @param cmd Command buffer to record into
      * @param imageIdx Index of swapchain image to render to
      */
-    void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIdx);
+    void recordCommandBuffer(vk::CommandBuffer cmd, uint32_t imageIdx);
 };
 
 #endif // VULKAN_ENGINE_H

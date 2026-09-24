@@ -51,9 +51,10 @@ int main(int argc, char* argv[])
 #endif
 
     VulkanEngine engine;
-    if (!engine.init(hwnd, 800, 600))
-    {
-        std::cerr << "Vulkan init failed\n";
+    try {
+        engine.init(hwnd, 800, 600);
+    } catch (const std::exception& e) {
+        std::cerr << "Vulkan init failed: " << e.what() << "\n";
         return -1;
     }
 

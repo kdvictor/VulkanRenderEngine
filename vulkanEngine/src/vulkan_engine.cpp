@@ -1,378 +1,440 @@
+/**
+ * @file vulkan_engine.cpp
+ * @brief Implementation of the VulkanEngine class (C++ API version)
+ * @details This file contains all the implementation details for Vulkan initialization,
+ *          resource creation, rendering, and cleanup operations using modern C++ vulkan.hpp.
+ */
+
 #include "vulkan_engine.h"
 #include <iostream>
-#include <vector>
 #include <algorithm>
-#include <vulkan/vulkan_win32.h>
-#include <windows.h>
+#include <stdexcept>
 
 VulkanEngine::VulkanEngine() {}
+
 VulkanEngine::~VulkanEngine()
 {
     cleanup();
 }
 
-bool VulkanEngine::init(void* nativeWinHandle, uint32_t width, uint32_t height)
+void VulkanEngine::init(void* nativeWinHandle, uint32_t width, uint32_t height)
 {
-    if (!createInstance()) return false;
-    if (!createSurface(nativeWinHandle)) return false;
-    if (!pickPhysicalDevice()) return false;
-    if (!createLogicalDevice()) return false;
-    if (!createSwapchain(width, height)) return false;
-    if (!createRenderPass()) return false;
-    if (!createFramebuffers()) return false;
-    if (!createCommandPool()) return false;
-    if (!createCommandBuffer()) return false;
-    if (!createSyncObjects()) return false;
+    createInstance();
+    createSurface(nativeWinHandle);
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createSwapchain(width, height);
+    createRenderPass();
+    createFramebuffers();
+    createCommandPool();
+    createCommandBuffer();
+    createSyncObjects();
     std::cout << "Vulkan init ok\n";
-    return true;
 }
 
-bool VulkanEngine::createInstance()
+void VulkanEngine::createInstance()
 {
-    VkApplicationInfo appInfo{};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "SimpleCAD";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "No Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    // Application info
+    vk::ApplicationInfo appInfo{
+        "SimpleCAD",                    // pApplicationName
+        VK_MAKE_VERSION(1, 0, 0),       // applicationVersion
+        "No Engine",                    // pEngineName
+        VK_MAKE_VERSION(1, 0, 0),       // engineVersion
+        VK_API_VERSION_1_0              // apiVersion
+    };
 
-    // 需要Win32 surface扩展
+    // Required Win32 surface extensions
     std::vector<const char*> extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME
     };
 
-    // 开发打开验证层
+    // Enable validation layers for debugging
     std::vector<const char*> layers = {
         "VK_LAYER_KHRONOS_validation"
     };
 
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-    createInfo.ppEnabledExtensionNames = extensions.data();
-    createInfo.enabledLayerCount = static_cast<uint32_t>(layers.size());
-    createInfo.ppEnabledLayerNames = layers.data();
+    // Instance create info
+    vk::InstanceCreateInfo createInfo{
+        {},                                             // flags
+        &appInfo,                                       // pApplicationInfo
+        static_cast<uint32_t>(layers.size()),          // enabledLayerCount
+        layers.data(),                                  // ppEnabledLayerNames
+        static_cast<uint32_t>(extensions.size()),      // enabledExtensionCount
+        extensions.data()                               // ppEnabledExtensionNames
+    };
 
-    VkResult res = vkCreateInstance(&createInfo, nullptr, &m_instance);
-    if (res != VK_SUCCESS)
-    {
-        std::cerr << "vkCreateInstance failed\n";
-        return false;
-    }
-    return true;
+    // Create instance (throws on error)
+    m_instance = vk::createInstanceUnique(createInfo);
 }
 
-bool VulkanEngine::createSurface(void* nativeWinHandle)
+void VulkanEngine::createSurface(void* nativeWinHandle)
 {
 #ifdef _WIN32
-    VkWin32SurfaceCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    createInfo.hwnd = (HWND)nativeWinHandle;
-    createInfo.hinstance = GetModuleHandle(nullptr);
-    VkResult res = vkCreateWin32SurfaceKHR(m_instance, &createInfo, nullptr, &m_surface);
-    if (res != VK_SUCCESS)
-    {
-        std::cerr << "create surface failed\n";
-        return false;
-    }
+    vk::Win32SurfaceCreateInfoKHR createInfo{
+        {},                                 // flags
+        GetModuleHandle(nullptr),           // hinstance
+        static_cast<HWND>(nativeWinHandle)  // hwnd
+    };
+
+    m_surface = m_instance->createWin32SurfaceKHRUnique(createInfo);
 #endif
-    return true;
 }
 
-bool VulkanEngine::pickPhysicalDevice()
+void VulkanEngine::pickPhysicalDevice()
 {
-    uint32_t devCount = 0;
-    vkEnumeratePhysicalDevices(m_instance, &devCount, nullptr);
-    if (devCount == 0) return false;
-    std::vector<VkPhysicalDevice> devices(devCount);
-    vkEnumeratePhysicalDevices(m_instance, &devCount, devices.data());
+    // Enumerate physical devices
+    std::vector<vk::PhysicalDevice> devices = m_instance->enumeratePhysicalDevices();
 
-    for (auto dev : devices)
-    {
-        uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, queueFamilies.data());
+    if (devices.empty()) {
+        throw std::runtime_error("No physical devices found");
+    }
 
-        bool found = false;
-        for (uint32_t i = 0; i < queueFamilyCount; i++)
-        {
-            if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-            {
-                VkBool32 presentSupport = false;
-                vkGetPhysicalDeviceSurfaceSupportKHR(dev, i, m_surface, &presentSupport);
-                if (presentSupport)
-                {
-                    m_physDev = dev;
+    // Find a device with graphics queue that supports presentation
+    for (const auto& device : devices) {
+        auto queueFamilies = device.getQueueFamilyProperties();
+
+        for (uint32_t i = 0; i < queueFamilies.size(); ++i) {
+            // Check for graphics support
+            if (queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics) {
+                // Check for present support
+                if (device.getSurfaceSupportKHR(i, m_surface.get())) {
+                    m_physDev = device;
                     m_graphicsQueueFamilyIndex = i;
-                    found = true;
-                    break;
+
+                    vk::PhysicalDeviceProperties props = device.getProperties();
+                    std::cout << "Selected GPU: " << props.deviceName << "\n";
+                    return;
                 }
             }
         }
-        if (found) break;
     }
-    return m_physDev != VK_NULL_HANDLE;
+
+    throw std::runtime_error("No suitable physical device found");
 }
 
-bool VulkanEngine::createLogicalDevice()
+void VulkanEngine::createLogicalDevice()
 {
+    // Queue create info
     float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueInfo{};
-    queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueInfo.queueFamilyIndex = m_graphicsQueueFamilyIndex;
-    queueInfo.queueCount = 1;
-    queueInfo.pQueuePriorities = &queuePriority;
+    vk::DeviceQueueCreateInfo queueCreateInfo{
+        {},                             // flags
+        m_graphicsQueueFamilyIndex,     // queueFamilyIndex
+        1,                              // queueCount
+        &queuePriority                  // pQueuePriorities
+    };
 
-    std::vector<const char*> devExts = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    // Enable swapchain extension
+    std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
 
-    VkDeviceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.queueCreateInfoCount = 1;
-    createInfo.pQueueCreateInfos = &queueInfo;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
-    createInfo.ppEnabledExtensionNames = devExts.data();
+    // Device create info
+    vk::DeviceCreateInfo createInfo{
+        {},                                             // flags
+        1,                                              // queueCreateInfoCount
+        &queueCreateInfo,                               // pQueueCreateInfos
+        0,                                              // enabledLayerCount (deprecated)
+        nullptr,                                        // ppEnabledLayerNames (deprecated)
+        static_cast<uint32_t>(deviceExtensions.size()), // enabledExtensionCount
+        deviceExtensions.data()                         // ppEnabledExtensionNames
+    };
 
-    VkResult res = vkCreateDevice(m_physDev, &createInfo, nullptr, &m_device);
-    if (res != VK_SUCCESS) return false;
-    vkGetDeviceQueue(m_device, m_graphicsQueueFamilyIndex, 0, &m_graphicsQueue);
-    return true;
+    // Create device (throws on error)
+    m_device = m_physDev.createDeviceUnique(createInfo);
+
+    // Get queue
+    m_graphicsQueue = m_device->getQueue(m_graphicsQueueFamilyIndex, 0);
 }
 
-bool VulkanEngine::createSwapchain(uint32_t w, uint32_t h)
+void VulkanEngine::createSwapchain(uint32_t w, uint32_t h)
 {
-    VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physDev, m_surface, &caps);
+    // Query surface capabilities
+    vk::SurfaceCapabilitiesKHR caps = m_physDev.getSurfaceCapabilitiesKHR(m_surface.get());
 
-    std::vector<VkSurfaceFormatKHR> formats;
-    uint32_t fmtCnt = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(m_physDev, m_surface, &fmtCnt, nullptr);
-    formats.resize(fmtCnt);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(m_physDev, m_surface, &fmtCnt, formats.data());
-    m_swapchainImageFormat = formats[0].format;
+    // Query surface formats
+    std::vector<vk::SurfaceFormatKHR> formats = m_physDev.getSurfaceFormatsKHR(m_surface.get());
 
-    m_swapchainExtent.width = std::clamp(w, caps.minImageExtent.width, caps.maxImageExtent.width);
-    m_swapchainExtent.height = std::clamp(h, caps.minImageExtent.height, caps.maxImageExtent.height);
+    // Query present modes
+    std::vector<vk::PresentModeKHR> presentModes = m_physDev.getSurfacePresentModesKHR(m_surface.get());
 
+    // Choose format (prefer BGRA8 SRGB)
+    vk::SurfaceFormatKHR chosenFormat = formats[0];
+    for (const auto& fmt : formats) {
+        if (fmt.format == vk::Format::eB8G8R8A8Srgb &&
+            fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+            chosenFormat = fmt;
+            break;
+        }
+    }
+    m_swapchainImageFormat = chosenFormat.format;
+
+    // Choose present mode (prefer FIFO for VSync)
+    vk::PresentModeKHR chosenMode = vk::PresentModeKHR::eFifo;
+    for (const auto& mode : presentModes) {
+        if (mode == vk::PresentModeKHR::eMailbox) {
+            chosenMode = mode;
+            break;
+        }
+    }
+
+    // Choose extent
+    if (caps.currentExtent.width != UINT32_MAX) {
+        m_swapchainExtent = caps.currentExtent;
+    } else {
+        m_swapchainExtent = vk::Extent2D{
+            std::clamp(w, caps.minImageExtent.width, caps.maxImageExtent.width),
+            std::clamp(h, caps.minImageExtent.height, caps.maxImageExtent.height)
+        };
+    }
+
+    // Choose image count
     uint32_t imageCount = caps.minImageCount + 1;
-    if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
+    if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount) {
         imageCount = caps.maxImageCount;
-
-    VkSwapchainCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    createInfo.surface = m_surface;
-    createInfo.minImageCount = imageCount;
-    createInfo.imageFormat = m_swapchainImageFormat;
-    createInfo.imageColorSpace = formats[0].colorSpace;
-    createInfo.imageExtent = m_swapchainExtent;
-    createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    createInfo.preTransform = caps.currentTransform;
-    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    createInfo.clipped = VK_TRUE;
-
-    VkResult res = vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain);
-    if (res != VK_SUCCESS) return false;
-
-    vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_swapchainImageCount, nullptr);
-    m_swapchainImages = new VkImage[m_swapchainImageCount];
-    vkGetSwapchainImagesKHR(m_device, m_swapchain, &m_swapchainImageCount, m_swapchainImages);
-
-    m_swapchainImageViews = new VkImageView[m_swapchainImageCount];
-    for (uint32_t i = 0; i < m_swapchainImageCount; i++)
-    {
-        VkImageViewCreateInfo ivInfo{};
-        ivInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        ivInfo.image = m_swapchainImages[i];
-        ivInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        ivInfo.format = m_swapchainImageFormat;
-        ivInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        ivInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        ivInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        ivInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        ivInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        ivInfo.subresourceRange.baseMipLevel = 0;
-        ivInfo.subresourceRange.levelCount = 1;
-        ivInfo.subresourceRange.baseArrayLayer = 0;
-        ivInfo.subresourceRange.layerCount = 1;
-        if (vkCreateImageView(m_device, &ivInfo, nullptr, &m_swapchainImageViews[i]) != VK_SUCCESS)
-            return false;
     }
-    return true;
+
+    // Create swapchain
+    vk::SwapchainCreateInfoKHR createInfo{
+        {},                                     // flags
+        m_surface.get(),                        // surface
+        imageCount,                             // minImageCount
+        m_swapchainImageFormat,                 // imageFormat
+        chosenFormat.colorSpace,                // imageColorSpace
+        m_swapchainExtent,                      // imageExtent
+        1,                                      // imageArrayLayers
+        vk::ImageUsageFlagBits::eColorAttachment, // imageUsage
+        vk::SharingMode::eExclusive,            // imageSharingMode
+        0,                                      // queueFamilyIndexCount
+        nullptr,                                // pQueueFamilyIndices
+        caps.currentTransform,                  // preTransform
+        vk::CompositeAlphaFlagBitsKHR::eOpaque, // compositeAlpha
+        chosenMode,                             // presentMode
+        VK_TRUE,                                // clipped
+        nullptr                                 // oldSwapchain
+    };
+
+    m_swapchain = m_device->createSwapchainKHRUnique(createInfo);
+
+    // Get swapchain images
+    m_swapchainImages = m_device->getSwapchainImagesKHR(m_swapchain.get());
 }
 
-bool VulkanEngine::createRenderPass()
+void VulkanEngine::createRenderPass()
 {
-    VkAttachmentDescription colorAtt{};
-    colorAtt.format = m_swapchainImageFormat;
-    colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAtt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAtt.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // Color attachment
+    vk::AttachmentDescription colorAttachment{
+        {},                                     // flags
+        m_swapchainImageFormat,                 // format
+        vk::SampleCountFlagBits::e1,            // samples
+        vk::AttachmentLoadOp::eClear,           // loadOp
+        vk::AttachmentStoreOp::eStore,          // storeOp
+        vk::AttachmentLoadOp::eDontCare,        // stencilLoadOp
+        vk::AttachmentStoreOp::eDontCare,       // stencilStoreOp
+        vk::ImageLayout::eUndefined,            // initialLayout
+        vk::ImageLayout::ePresentSrcKHR         // finalLayout
+    };
 
-    VkAttachmentReference colorRef{};
-    colorRef.attachment = 0;
-    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    vk::AttachmentReference colorRef{
+        0,                                      // attachment
+        vk::ImageLayout::eColorAttachmentOptimal // layout
+    };
 
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorRef;
+    // Subpass
+    vk::SubpassDescription subpass{
+        {},                                     // flags
+        vk::PipelineBindPoint::eGraphics,       // pipelineBindPoint
+        0,                                      // inputAttachmentCount
+        nullptr,                                // pInputAttachments
+        1,                                      // colorAttachmentCount
+        &colorRef,                              // pColorAttachments
+        nullptr,                                // pResolveAttachments
+        nullptr,                                // pDepthStencilAttachment
+        0,                                      // preserveAttachmentCount
+        nullptr                                 // pPreserveAttachments
+    };
 
-    VkRenderPassCreateInfo rpInfo{};
-    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    rpInfo.attachmentCount = 1;
-    rpInfo.pAttachments = &colorAtt;
-    rpInfo.subpassCount = 1;
-    rpInfo.pSubpasses = &subpass;
+    // Subpass dependency
+    vk::SubpassDependency dependency{
+        VK_SUBPASS_EXTERNAL,                    // srcSubpass
+        0,                                      // dstSubpass
+        vk::PipelineStageFlagBits::eColorAttachmentOutput, // srcStageMask
+        vk::PipelineStageFlagBits::eColorAttachmentOutput, // dstStageMask
+        {},                                     // srcAccessMask
+        vk::AccessFlagBits::eColorAttachmentWrite, // dstAccessMask
+        {}                                      // dependencyFlags
+    };
 
-    return vkCreateRenderPass(m_device, &rpInfo, nullptr, &m_renderPass) == VK_SUCCESS;
+    // Render pass create info
+    vk::RenderPassCreateInfo createInfo{
+        {},                                     // flags
+        1,                                      // attachmentCount
+        &colorAttachment,                       // pAttachments
+        1,                                      // subpassCount
+        &subpass,                               // pSubpasses
+        1,                                      // dependencyCount
+        &dependency                             // pDependencies
+    };
+
+    m_renderPass = m_device->createRenderPassUnique(createInfo);
 }
 
-bool VulkanEngine::createFramebuffers()
+void VulkanEngine::createFramebuffers()
 {
-    m_framebuffers = new VkFramebuffer[m_swapchainImageCount];
-    for (uint32_t i = 0; i < m_swapchainImageCount; i++)
-    {
-        VkFramebufferCreateInfo fbInfo{};
-        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbInfo.renderPass = m_renderPass;
-        fbInfo.attachmentCount = 1;
-        fbInfo.pAttachments = &m_swapchainImageViews[i];
-        fbInfo.width = m_swapchainExtent.width;
-        fbInfo.height = m_swapchainExtent.height;
-        fbInfo.layers = 1;
-        if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_framebuffers[i]) != VK_SUCCESS)
-            return false;
+    // Create image views
+    m_swapchainImageViews.reserve(m_swapchainImages.size());
+    for (const auto& image : m_swapchainImages) {
+        vk::ImageViewCreateInfo createInfo{
+            {},                                 // flags
+            image,                              // image
+            vk::ImageViewType::e2D,             // viewType
+            m_swapchainImageFormat,             // format
+            {},                                 // components (identity)
+            {                                   // subresourceRange
+                vk::ImageAspectFlagBits::eColor,
+                0, 1,                           // baseMipLevel, levelCount
+                0, 1                            // baseArrayLayer, layerCount
+            }
+        };
+
+        m_swapchainImageViews.push_back(m_device->createImageViewUnique(createInfo));
     }
-    return true;
+
+    // Create framebuffers
+    m_framebuffers.reserve(m_swapchainImageViews.size());
+    for (const auto& imageView : m_swapchainImageViews) {
+        vk::ImageView attachments[] = { imageView.get() };
+
+        vk::FramebufferCreateInfo createInfo{
+            {},                                 // flags
+            m_renderPass.get(),                 // renderPass
+            1,                                  // attachmentCount
+            attachments,                        // pAttachments
+            m_swapchainExtent.width,            // width
+            m_swapchainExtent.height,           // height
+            1                                   // layers
+        };
+
+        m_framebuffers.push_back(m_device->createFramebufferUnique(createInfo));
+    }
 }
 
-bool VulkanEngine::createCommandPool()
+void VulkanEngine::createCommandPool()
 {
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.queueFamilyIndex = m_graphicsQueueFamilyIndex;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    return vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_cmdPool) == VK_SUCCESS;
+    vk::CommandPoolCreateInfo createInfo{
+        vk::CommandPoolCreateFlagBits::eResetCommandBuffer, // flags
+        m_graphicsQueueFamilyIndex                          // queueFamilyIndex
+    };
+
+    m_cmdPool = m_device->createCommandPoolUnique(createInfo);
 }
 
-bool VulkanEngine::createCommandBuffer()
+void VulkanEngine::createCommandBuffer()
 {
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = m_cmdPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-    return vkAllocateCommandBuffers(m_device, &allocInfo, &m_cmdBuffer) == VK_SUCCESS;
+    vk::CommandBufferAllocateInfo allocInfo{
+        m_cmdPool.get(),                        // commandPool
+        vk::CommandBufferLevel::ePrimary,       // level
+        1                                       // commandBufferCount
+    };
+
+    std::vector<vk::CommandBuffer> cmdBuffers = m_device->allocateCommandBuffers(allocInfo);
+    m_cmdBuffer = cmdBuffers[0];
 }
 
-bool VulkanEngine::createSyncObjects()
+void VulkanEngine::createSyncObjects()
 {
-    VkSemaphoreCreateInfo semInfo{};
-    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    vk::SemaphoreCreateInfo semInfo{};
+    vk::FenceCreateInfo fenceInfo{
+        vk::FenceCreateFlagBits::eSignaled      // Start signaled
+    };
 
-    if (vkCreateSemaphore(m_device, &semInfo, nullptr, &m_imageAvailableSem) != VK_SUCCESS) return false;
-    if (vkCreateSemaphore(m_device, &semInfo, nullptr, &m_renderFinishedSem) != VK_SUCCESS) return false;
-    if (vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFence) != VK_SUCCESS) return false;
-    return true;
+    m_imageAvailableSem = m_device->createSemaphoreUnique(semInfo);
+    m_renderFinishedSem = m_device->createSemaphoreUnique(semInfo);
+    m_inFlightFence = m_device->createFenceUnique(fenceInfo);
 }
 
-void VulkanEngine::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIdx)
+void VulkanEngine::recordCommandBuffer(vk::CommandBuffer cmd, uint32_t imageIdx)
 {
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    // Begin command buffer
+    vk::CommandBufferBeginInfo beginInfo{};
+    cmd.begin(beginInfo);
 
-    VkRenderPassBeginInfo rpBegin{};
-    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpBegin.renderPass = m_renderPass;
-    rpBegin.framebuffer = m_framebuffers[imageIdx];
-    rpBegin.renderArea.offset = { 0,0 };
-    rpBegin.renderArea.extent = m_swapchainExtent;
-    // ========== 纯色背景：浅蓝色 ==========
-    VkClearValue clearColor = { {{0.1f,0.2f,0.4f,1.0f}} };
-    rpBegin.clearValueCount = 1;
-    rpBegin.pClearValues = &clearColor;
+    // Clear color: dark blue background
+    vk::ClearValue clearColor{
+        vk::ClearColorValue{std::array<float, 4>{0.1f, 0.2f, 0.4f, 1.0f}}
+    };
 
-    vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdEndRenderPass(cmd);
-    vkEndCommandBuffer(cmd);
+    // Render pass begin info
+    vk::RenderPassBeginInfo rpBegin{
+        m_renderPass.get(),                     // renderPass
+        m_framebuffers[imageIdx].get(),         // framebuffer
+        vk::Rect2D{{0, 0}, m_swapchainExtent},  // renderArea
+        1,                                      // clearValueCount
+        &clearColor                             // pClearValues
+    };
+
+    cmd.beginRenderPass(rpBegin, vk::SubpassContents::eInline);
+    cmd.endRenderPass();
+    cmd.end();
 }
 
 void VulkanEngine::renderLoop()
 {
-    vkWaitForFences(m_device, 1, &m_inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(m_device, 1, &m_inFlightFence);
+    // Wait for previous frame
+    vk::Result result = m_device->waitForFences(
+        1, &m_inFlightFence.get(),
+        VK_TRUE,
+        UINT64_MAX
+    );
+    m_device->resetFences(1, &m_inFlightFence.get());
 
-    uint32_t imageIdx;
-    vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailableSem, VK_NULL_HANDLE, &imageIdx);
+    // Acquire next image
+    uint32_t imageIdx = m_device->acquireNextImageKHR(
+        m_swapchain.get(),
+        UINT64_MAX,
+        m_imageAvailableSem.get(),
+        nullptr
+    ).value;
 
-    vkResetCommandBuffer(m_cmdBuffer, 0);
+    // Reset and record command buffer
+    m_cmdBuffer.reset();
     recordCommandBuffer(m_cmdBuffer, imageIdx);
 
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    VkSemaphore waitSem[] = { m_imageAvailableSem };
-    VkPipelineStageFlags waitStage[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSem;
-    submitInfo.pWaitDstStageMask = waitStage;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_cmdBuffer;
-    VkSemaphore signalSem[] = { m_renderFinishedSem };
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = signalSem;
+    // Submit commands
+    vk::Semaphore waitSemaphores[] = { m_imageAvailableSem.get() };
+    vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+    vk::Semaphore signalSemaphores[] = { m_renderFinishedSem.get() };
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFence);
+    vk::SubmitInfo submitInfo{
+        1,                                      // waitSemaphoreCount
+        waitSemaphores,                         // pWaitSemaphores
+        waitStages,                             // pWaitDstStageMask
+        1,                                      // commandBufferCount
+        &m_cmdBuffer,                           // pCommandBuffers
+        1,                                      // signalSemaphoreCount
+        signalSemaphores                        // pSignalSemaphores
+    };
 
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSem;
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &m_swapchain;
-    presentInfo.pImageIndices = &imageIdx;
-    vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
+    m_graphicsQueue.submit(1, &submitInfo, m_inFlightFence.get());
+
+    // Present
+    vk::SwapchainKHR swapchains[] = { m_swapchain.get() };
+    vk::PresentInfoKHR presentInfo{
+        1,                                      // waitSemaphoreCount
+        signalSemaphores,                       // pWaitSemaphores
+        1,                                      // swapchainCount
+        swapchains,                             // pSwapchains
+        &imageIdx,                              // pImageIndices
+        nullptr                                 // pResults
+    };
+
+    result = m_graphicsQueue.presentKHR(presentInfo);
 }
 
 void VulkanEngine::cleanup()
 {
-    if (m_device != VK_NULL_HANDLE)
-    {
-        vkDestroySemaphore(m_device, m_imageAvailableSem, nullptr);
-        vkDestroySemaphore(m_device, m_renderFinishedSem, nullptr);
-        vkDestroyFence(m_device, m_inFlightFence, nullptr);
-
-        vkFreeCommandBuffers(m_device, m_cmdPool, 1, &m_cmdBuffer);
-        vkDestroyCommandPool(m_device, m_cmdPool, nullptr);
-
-        for (uint32_t i = 0; i < m_swapchainImageCount; i++)
-        {
-            vkDestroyFramebuffer(m_device, m_framebuffers[i], nullptr);
-            vkDestroyImageView(m_device, m_swapchainImageViews[i], nullptr);
-        }
-        delete[] m_framebuffers;
-        delete[] m_swapchainImageViews;
-        delete[] m_swapchainImages;
-
-        vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        vkDestroyDevice(m_device, nullptr);
+    if (m_device) {
+        m_device->waitIdle();
     }
-    if (m_surface != VK_NULL_HANDLE)
-        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-    if (m_instance != VK_NULL_HANDLE)
-        vkDestroyInstance(m_instance, nullptr);
+    // All Unique handles automatically destroyed in reverse order of creation
 }
