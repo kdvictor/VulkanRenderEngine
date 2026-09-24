@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(OGLBF)
+project(VulkanRenderEngine)
 
 #set c++ properties
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+#QT6
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+qt_standard_project_setup()
 
 #set _DEBUG FLAG
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
@@ -25,11 +29,7 @@ message("thirdyParty srcs: ${THIRDPARTY_SOURCES}")
 
 #set include dir
 include_directories(
-"${CMAKE_CURRENT_LIST_DIR}/thirdParty/include"
-"${CMAKE_CURRENT_LIST_DIR}/asserts/include"
-"${CMAKE_CURRENT_LIST_DIR}/framework/include"
-"${CMAKE_CURRENT_LIST_DIR}/wrapper/include"
-"${CMAKE_CURRENT_LIST_DIR}/app/include"
+"${CMAKE_CURRENT_LIST_DIR}/vulkanEngine/include"
 )
 
 #set link dir
@@ -38,11 +38,38 @@ link_directories(
 )
 
 #sub directories
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/asserts")
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/framework")
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/wrapper")
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/app")
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/vulkanEngine")
 
-add_executable(${PROJECT_NAME} ${MAIN_SRCS} ${THIRDPARTY_SOURCES})
+qt_add_executable(${PROJECT_NAME}
+    ${MAIN_SRCS} 
+    ${THIRDPARTY_SOURCES}
+)
 
-target_link_libraries(${PROJECT_NAME} glfw3 fw app wrapper)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets vulkanEngine)
+
+# 确保包含 Qt6
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${Qt6_INCLUDE_DIRS}
+)
+
+# 自动运行 windeployqt
+if(WIN32)
+    # 获取 windeployqt 可执行文件路径
+    get_target_property(_qmake_executable Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qt_bin_dir "${_qmake_executable}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${_qt_bin_dir}")
+
+    if(WINDEPLOYQT_EXECUTABLE)
+        # 添加自定义命令，在构建后自动运行 windeployqt
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                --verbose 0
+                --no-compiler-runtime
+                "$<TARGET_FILE:${PROJECT_NAME}>"
+            COMMENT "Running windeployqt to deploy Qt libraries..."
+        )
+        message(STATUS "windeployqt found: ${WINDEPLOYQT_EXECUTABLE}")
+    else()
+        message(WARNING "windeployqt not found. Qt libraries will not be automatically deployed.")
+    endif()
+endif()
